@@ -24,6 +24,7 @@ const userSchema = new mongoose.Schema({
         type: String,
         required: [true, 'A user must have a password'],
         minLength: 8,
+        select: false
         // max: 1024
     },
     passwordConfirm: {
@@ -49,5 +50,11 @@ userSchema.pre('save', async function(next){
     this.passwordConfirm = undefined;
     next();
 });
+
+userSchema.methods.correctPassword = async function(candidatePassword,userPassword){
+    //we got candidate password form login and user passowrnd form signup
+    return await bcrypt.compare(candidatePassword,userPassword);
+    //Here the candidate password is not hashed but the user password is hashed. So without the compare fucntion there is no other way to know that these passowrd are equal.
+}
 
 module.exports = mongoose.model('User', userSchema);

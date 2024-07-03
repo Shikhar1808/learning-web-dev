@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const validator = require('validator');
 const bcrypt = require("bcryptjs")
+const crypto = require('crypto');
 
 const userSchema = new mongoose.Schema({
     name: {
@@ -20,6 +21,11 @@ const userSchema = new mongoose.Schema({
         type: String
         // required: true,
     },
+    role:{
+        type: String,
+        enum:['user','guide','lead-guide','admin'],
+        default: 'user'
+    },
     password: {
         type: String,
         required: [true, 'A user must have a password'],
@@ -38,7 +44,10 @@ const userSchema = new mongoose.Schema({
             },
             message: 'Passwords are not the same'
         }
-    }
+    },
+    passwordChangedAt: Date,
+    passwordResetToken: String,
+    passwordResetExpires: Date,
 });
 
 userSchema.pre('save', async function(next){
@@ -55,6 +64,29 @@ userSchema.methods.correctPassword = async function(candidatePassword,userPasswo
     //we got candidate password form login and user passowrnd form signup
     return await bcrypt.compare(candidatePassword,userPassword);
     //Here the candidate password is not hashed but the user password is hashed. So without the compare fucntion there is no other way to know that these passowrd are equal.
+}
+
+userSchema.methods.changedPasswordAfter = function(JWTTimestamp){
+    if(this.passwordChangedAt){
+        const changedTimestamp = parseInt(this.passwordChangedAt.getTime()/1000,10);
+        //the above line is to convert the passwordChangedAt to seconds
+        //parseInt is used to convert the string to number
+        console.log(changedTimestamp,JWTTimestamp)
+        return JWTTimestamp < changedTimestamp;
+    }
+    //False means not changed
+    return false;
+}
+
+userSchema.methods.correctPasswordResetToken = function(){
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    //basically we are creating a random token and then hashing it
+    this.passwordResetToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+    //the above line is to hash the token and then return it
+    this.passwordResetExpires = Date.now() + 10*60*1000;
+
+    return resetToken;
+    //we are returning the unhashed token to send it to the user via email and then hash it again when the user sends it back to us to compare it with the hashed token in the database to reset the password.
 }
 
 module.exports = mongoose.model('User', userSchema);

@@ -48,6 +48,12 @@ const userSchema = new mongoose.Schema({
     passwordChangedAt: Date,
     passwordResetToken: String,
     passwordResetExpires: Date,
+    active:{
+        type: Boolean,
+        default: true,
+        select: false
+    
+    }
 });
 
 userSchema.pre('save', async function(next){
@@ -59,6 +65,21 @@ userSchema.pre('save', async function(next){
     this.passwordConfirm = undefined;
     next();
 });
+
+userSchema.pre('save', function(next){
+    if(!this.isModified('password') || this.isNew) return next();
+    //this.isNew is used to check if the document is new or not
+    this.passwordChangedAt = Date.now() - 1000;
+    //1000 is used to make sure that the token is created after the password is changed
+    next();
+
+});
+
+userSchema.pre(/^find/, function(next){ //"/^find/" is a regular expression that means that any string that starts with find will be executed, which means that any query that starts with find will be executed
+    //this points to the current query
+    this.find({active: {$ne: false}});
+    next();
+})
 
 userSchema.methods.correctPassword = async function(candidatePassword,userPassword){
     //we got candidate password form login and user passowrnd form signup
@@ -84,6 +105,7 @@ userSchema.methods.correctPasswordResetToken = function(){
     this.passwordResetToken = crypto.createHash('sha256').update(resetToken).digest('hex');
     //the above line is to hash the token and then return it
     this.passwordResetExpires = Date.now() + 10*60*1000;
+    //the above line is to set the expiration time of the token to 10 minutes
 
     return resetToken;
     //we are returning the unhashed token to send it to the user via email and then hash it again when the user sends it back to us to compare it with the hashed token in the database to reset the password.

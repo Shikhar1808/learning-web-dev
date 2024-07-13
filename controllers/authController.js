@@ -12,6 +12,31 @@ const signToken = id =>{
     return jwt.sign({id},secretKey,{ expiresIn: process.env.JWT_EXPIRES_IN})
 }
 
+const createSendToken = (user, statusCode, res) => {
+    const token = signToken(user._id);
+
+    const cookieOptions = {
+        expires: new Date(Date.now() + process.env.JWT_COOKIE_EXPIRES_IN * 24 * 60 * 60 * 1000),
+        httpOnly: true,
+    }
+    if(process.env.NODE_ENV === 'production') cookieOptions.secure = true;
+
+    res.cookie('jwt', token, cookieOptions);
+    //The above line is to send the token to the client as a cookie with the name jwt and the token as the value of the cookie and the expiration date of the cookie is set to the value of the JWT_COOKIE_EXPIRES_IN in the .env file and the httpOnly is set to true to make sure that the cookie is not accessible by the browser and the secure is set to true to make sure that the cookie is only sent via https
+
+    //Remove the password from the output
+    user.password = undefined;
+
+    res.status(statusCode).json({
+        status: 'success',
+        token,
+        data: {
+            user
+        }
+    })
+
+}
+
 exports.signup = catchAsync(async (req, res) => {
     const newUser = await User.create({
         name: req.body.name,
@@ -22,15 +47,7 @@ exports.signup = catchAsync(async (req, res) => {
         role: req.body.role
     });
 
-    const token = signToken(newUser._id)
-
-    res.status(201).json({
-        status: 'success',
-        token,
-        data: {
-            user: newUser
-        }
-    })
+    createSendToken(newUser, 201, res);
 } )
 
 exports.login = catchAsync(async(req,res,next)=>{
@@ -50,11 +67,7 @@ exports.login = catchAsync(async(req,res,next)=>{
     }
 
     //#) Sent the token to the client
-    token = signToken(user._id),
-    res.status(200).json({
-        staus:"success",
-        token
-    })
+    createSendToken(user,200,res);
 })
 
 exports.protect = catchAsync(async(req,res, next)=>{
@@ -122,8 +135,9 @@ exports.forgotPassword = catchAsync(async(req,res,next)=>{
 
     //3) Send it back as an email
     const resetURL = `${req.protocol}://${req.get('host')}/api/v1/users/resetPassword/${resetToken}`;
+    //The above line is to create the resetURL to send it to the user via email to reset the password with the token we created above and then hashed it and saved it in the database to compare it with the token the user sends back to us to reset the password
 
-    const message = `Forgot your password submit your patch request with your new passwordConfirm to: ${resetURL}. \nIf yoy didnt forgot this password, please ignore your email `
+    const message = `Forgot your password submit your patch request with your new passwordConfirm to: ${resetURL}. \nIf you didnt forgot this password, please ignore your email `
 
     try{
         await sendEmail({
@@ -143,6 +157,7 @@ exports.forgotPassword = catchAsync(async(req,res,next)=>{
         user.passwordResetToken = undefined;
         user.passwordResetExpires = undefined;
         await user.save({validateBeforeSave: false});
+        //The above three lines are to remove the passwordResetToken and passwordResetExpires from the user document if there was an error sending the email beacuse we dont want to keep the token in the database if the email was not sent because the user will not be able to reset the password  if the token is not sent to the user
 
         return next(new AppError("There was an error sending the email. Try again later",500))
     }
@@ -176,10 +191,30 @@ exports.resetPassword = catchAsync(async(req,res,next)=>{
 
 
     //4) Log the user in, send JWT
-    token = signToken(user._id),
-    res.status(200).json({
-        staus:"success",
-        token
-    })
+    createSendToken(user,200,res);
 
+})
+
+exports.updatePassword = catchAsync(async(req,res,next)=>{
+    
+    //1) Get user from the collection
+    const user = await User.findById(req.user.id).select('+password');
+    //we are using findById because the user is already logged in so we can get the user from the req.user.id and the user want to change the password without logging out or using the forgot password route
+
+    //Why we didn't use findOneAndUpdate here?
+    //Because we want to use the save middleware to hash the password before saving it to the database, the validator in the confirmPassword field in the userSchema will not work if we use findOneAndUpdate because the validator will not work with the update method. Therefore, we should not use the update method to update the password in the database.
+    
+    // 2) Check if POSTed current password is correct
+    if(!(await user.correctPassword(req.body.passwordCurrent,user.password))){
+        return next(new AppError('Your current password is wrong',401))
+    }
+    //in the above lines we are checking if the password the user entered in the passwordCurrent field is the same as the password in the database
+
+    // 3) If so, update password
+    user.password = req.body.password;
+    user.passwordConfirm = req.body.passwordConfirm;
+    await user.save();
+    
+    // 4) Log user in, send JWT
+    createSendToken(user,200,res);
 })
